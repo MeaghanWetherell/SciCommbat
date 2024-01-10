@@ -1,0 +1,486 @@
+---
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Change this, then run
+```{r}
+foldername <- "Spring 2023/"
+gamename <- "Spring2023VersionSC9"
+```
+
+
+```{r}
+library(dplyr)
+library(reshape2)
+library(stringr)
+library(qdap)
+library(readtext)
+library(rvest)
+library(readxl)
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+nope<- read_xlsx("List of Changes To Make.xlsx", sheet=2) #May need to update
+
+```
+
+# Import the Game
+
+Remove everything before </style> cuts off header
+Replace &quot; with "
+Split passages by </tw-passagedata>
+
+```{r}
+rawHfun <- function(x){
+  x1 <- paste(x,".html", sep = "")
+  paste(readLines(x1), collapse="\n")
+}
+rawHTML <- rawHfun(paste(foldername,gamename, sep = ""))
+```
+
+
+
+```{r}
+sHfun <- function(x){
+  x <-gsub(".*</style>", "", x)
+  y <- data.frame(text = 
+                  unlist(str_split(x, 
+                  pattern = '</tw-passagedata>')))
+  return(y)
+} 
+
+splithtml <- sHfun(rawHTML)
+
+
+split2 <- splithtml %>%
+  mutate(text = gsub("&quot;", '"', text)) %>%
+  mutate(Name = sub("<tw-passagedata.*name=", "", text)) %>%
+  mutate(Name = gsub("tags=.*", "", Name))%>%
+  mutate(NiceText = gsub('.*size="100,100">', "", text))%>%
+  mutate(NiceText = sub("&lt;!-- .*.--&gt;", "", NiceText))
+```
+
+#twee is easier, but I've done what I need to do now.
+```{r}
+twee <- readtext(paste(foldername,gamename, ".twee", sep = ""))
+```
+
+Here, we need to export a list of passage names. In twee files passages are identified by ::, and the first two are storytitle and storydata, which may not be needed. The position is also embedded in the passage titles, so it's not really needed either.
+```{r}
+x = twee$text
+badtitles <- c("Tag Explanation", "Climate Jokes", "trust bar", "Starting Passage", "The End")
+
+tweefun <- function(x){
+    y <- data.frame(text = 
+                  unlist(str_split(x, 
+                  pattern = '\\:: '))) %>%
+    mutate(Passage = gsub('position.*', "", gsub('\\{"', '', text))) %>%
+    mutate(Passage = gsub("\\[.*", "", Passage)) %>%
+    filter(Passage != badtitles)
+  
+  y1 <-y[4:length(y$text),] #removes storydata from the top, may need to change to 3 sometimese
+  
+   return(y1)
+  } 
+
+tweechoices <- function(y1){
+   y2 <- y1 %>%
+    mutate(HTMLtag = gsub(".*<!--", "", gsub("-->.*", "",text))) %>%
+    mutate(text2 = gsub(".*\\}", "", text)) %>%
+    mutate(text2 = gsub(".*-->", "", text2)) %>%
+    mutate(text2 = gsub("\\[", "PIZZA", text2))
+  
+  y3 <- str_split_fixed(y2$text2, "PIZZAPIZZA", 8) %>%
+    as.data.frame()
+  colnames(y3) = c("Drop", "Ch1", "Ch2", "Ch3", "Ch4", "Ch5", "Ch6", "Ch7")
+  
+  y4 <- cbind(y2, y3) %>%
+    select(-text, -text2, -Drop)
+  
+  y5 <- y4 %>%
+    melt(id.vars = c("Passage", "HTMLtag")) %>%
+    mutate(value = gsub(".*->", "", gsub("\\]|\n", "", value))) %>%
+    mutate(value = gsub(" ", "", value)) %>%
+        mutate(Passage = gsub(" ", "", Passage)) %>%
+    mutate(Choice = ifelse(variable %in% c("Ch1", "Ch2"), "keep", value)) %>%
+    filter(Choice != "") %>%
+    select(-Choice) %>%
+    dcast(Passage+HTMLtag~variable, value = "value", fill = "")
+  
+  return(y5)
+
+}
+twee2 <- tweefun(twee$text)
+twee3 <- tweechoices(twee2)
+
+write.csv(twee3, paste(foldername, gamename, "Choices.csv", sep = "" ), row.names = FALSE)
+```
+
+# Endings and their choices
+This section outputs a list of endings and the pathway of choices that lead to them. Currently, only works if you chose 1 1 1 1 or 2 2 2 2 2 etc. oh, it would do that maybe but it isn't working
+
+
+
+
+
+```{r eval = FALSE}
+ends <- twee3 %>% filter(Ch1 == "") %>% select(EndingPassage = Passage)
+other <- twee3 %>% filter(Passage %!in% ends$EndingPassage) %>% select(-HTMLtag)
+start <- twee3 %>% filter(Passage %in% c("AnExampleofASkeleton", 	"Alligator1",	"CaimenLizardStart", "CrocodileStart"))
+
+library(combinat)
+nm <- colnames(other %>% select(-Passage))
+
+
+
+Choice = "Ch1"
+dataset = other
+
+StartLineages <- function(dataset1, dataset){
+  step1.1 <- merge(dataset1,dataset, by.x = "Ch1", by.y = "Passage", all.x = TRUE)  %>%
+        select(PassageStart=Passage, Step1=Ch1, Step2=Ch2.y)
+  step1.2 <- merge(dataset1,dataset, by.x = "Ch2", by.y = "Passage", all.x = TRUE)  %>%
+        select(PassageStart=Passage, Step1=Ch2, Step2=Ch2.y)
+  step1.3 <- merge(dataset1,dataset, by.x = "Ch3", by.y = "Passage", all.x = TRUE)  %>%
+        select(PassageStart=Passage, Step1=Ch3, Step2=Ch3.y)
+  step1.4 <- merge(dataset1,dataset, by.x = "Ch4", by.y = "Passage", all.x = TRUE)  %>%
+        select(PassageStart=Passage, Step1=Ch4, Step2=Ch4.y)
+  
+  steps <- rbind(step1.1, step1.2, step1.3, step1.4) %>%
+    filter(!is.na(Step1) & Step1!="")
+}
+
+dataset1 = other
+dataset2 = other
+Passage = "Ch1"
+stepcount = 3
+
+StartLineages <- function(dataset1, dataset2, Passage, Names, stepcount){
+  step1.1 <- left_join(dataset1,dataset2,  by= c("Ch1"="Ch1"))[,1:2]
+  step1.2 <- left_join(dataset1,dataset2,  by= c("Ch1"="Ch2"))#[,1:2]
+  step1.3 <- merge(dataset1,dataset2,  by.x = Passage, by.y = "Ch3", all.x = TRUE)  
+  step1.4 <- merge(dataset1,dataset2, by.x = Passage, by.y = "Ch4",  all.x = TRUE)  
+  
+  colnames(step1.1) = paste("Step",seq(1:3),sep = "")
+  
+  steps <- rbind(step1.1, step1.2, step1.3, step1.4) %>%
+    filter(!is.na(Step1) & Step1!="")
+  colnames(steps) = Names
+  return(steps)
+}
+
+start <- StartLineages(other, other, "Passage", c("StartPassage", "Step1"))
+step1.1 <- StartLineages(start, other, "Step1", c("Step1", "Step2"))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+ends <- twee3 %>% filter(Ch1 == "") %>% select(EndingPassage = Passage)
+other <- twee3 %>% filter(Passage %!in% ends$EndingPassage) %>% select(-HTMLtag)
+start <- twee3 %>% filter(Passage %in% c("AnExampleofASkeleton", 	"Alligator1",	"CaimenLizardStart", "CrocodileStart"))
+
+
+
+
+Choice = "Ch1"
+dataset = other
+
+Lineages <- function(dataset, Choice){
+
+   Choice2 <- paste(Choice, ".y", sep = "") 
+   
+    step1 <- merge(dataset, dataset, by.x = Choice, by.y = "Passage", all.x = TRUE)  %>%
+      select(PassageStart=Passage, Step1={{Choice}}, Step2={{Choice2}})
+    step2 <- merge(step1, dataset, by.x = "Step2", by.y = "Passage", all.x = TRUE)  %>%
+      select(PassageStart, Step1, Step2, Step3={{Choice}})
+    step3 <- merge(step2, dataset, by.x = "Step3", by.y = "Passage", all.x = TRUE)  %>%
+      select(PassageStart, Step1, Step2,Step3, Step4={{Choice}})
+    step4 <- merge(step3, dataset, by.x = "Step4", by.y = "Passage", all.x = TRUE)  %>%
+      select(PassageStart, Step1, Step2,Step3,Step4, Step5={{Choice}})
+    step5 <- merge(step4, dataset, by.x = "Step5", by.y = "Passage", all.x = TRUE)  %>%
+      select(PassageStart, Step1, Step2,Step3,Step4, Step5, Step6={{Choice}})
+    step6 <- merge(step5, dataset, by.x = "Step6", by.y = "Passage", all.x = TRUE)  %>%
+      select(PassageStart, Step1, Step2,Step3,Step4, Step5, Step6, Step7={{Choice}})
+    step7 <- merge(step6, dataset, by.x = "Step7", by.y = "Passage", all.x = TRUE)  %>%
+      select(PassageStart, Step1, Step2,Step3,Step4, Step5, Step6, Step7, Step8={{Choice}})
+    
+    return(step7)
+}
+
+x <- data.frame(PassageStart="", Step1="",Step2="",  Step3="",  Step4="",  Step5="",  Step6="",  Step7="",  Step8="" )
+
+for(i in colnames(other %>% select(-Passage))){
+  x1 <- Lineages(other, i)
+  x <- rbind(x1, x)
+}
+
+pathways <- x %>%
+  filter(Step1!="" & !is.na(Step1))
+
+
+  
+write.csv(other, "other.csv")
+```
+
+#Pull out $ strings
+```{r}
+x <- c("now (set:$Morality to 0", "to $pill and $trust")
+
+
+findvariables <- function(x){
+ # x = split2$NiceText
+  x0 <- gsub("\\(set:|\\+1)|\\+2)|\\+", "", x)
+  x1 <- data.frame(m = unique(scan(text = x0, what = "\\"))) %>%
+    filter(grepl("\\$", m)) %>%
+    arrange(m)
+  x2 <- x1 %>%
+    filter(substr(m, 1,1) == "$") %>%
+    filter(m %!in% nope$m)
+
+  
+  return(x2) 
+}
+
+variables <- findvariables(split2$NiceText)
+write.csv(variables, paste(foldername, "variables.csv", sep = ""))
+```
+
+# Pull out set
+currently only taking last instance of it
+```{r}
+x = c("hey there(set: $Trust to $Trust +1)(set: $something to 1)}df")
+
+
+
+findset <- function(x){
+ # x = split2$NiceText
+  x <- split2
+  y <- data.frame(text = 
+                  unlist(str_split(x$NiceText, 
+                  pattern = '\\('))) %>%
+      mutate(FunctionCode = gsub(".*\\(|\\).*|\\)].*", "", text))
+   
+   y1 <- y %>%
+     filter(FunctionCode!= "") %>%
+     filter(!grepl("\\&lt;!--", FunctionCode)) %>%
+     filter(FunctionCode!= "\\{") %>%
+     filter(FunctionCode %!in% nope$m) %>%
+     filter(grepl("\\:", FunctionCode))  %>%
+     filter(!grepl("either:|if:|else:|if-else:|\\{TwineScrip", FunctionCode))
+   
+   
+    y2 <- y1 %>% 
+      group_by(FunctionCode) %>%
+      tally(name = "Number of Instances") 
+  
+  return(y2) 
+}
+
+verbs <- findset(split2$NiceText)
+verbs2 <- verbs %>%
+  filter(grepl("\\:", FunctionCode))
+write.csv(verbs2, paste(foldername, "verbs.csv", sep = ""), row.names=FALSE)
+
+
+
+```
+
+
+
+sHfun <- function(x){
+  x <-gsub(".*</style>", "", x)
+ 
+  } 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+splitFun <- function(x){
+  k <- unique(data.frame(text = 
+                           sub("(?![$])|[[:punct:]]", "",
+                           perl=TRUE, 
+                           unlist(str_split(strip_html(x), 
+                           pattern = ' ')))) )
+}
+
+wtf <- splitFun(rawHTML)
+
+wtf2 <- wtf%>%
+  filter(grepl("\\$", text))
+
+```
+
+
+
+```{r}
+splitFun <- function(x){return(unique(data.frame(text = gsub("(?![.'-])[[:punct:]]", "",perl=TRUE, unlist(str_split(strip_html(x), pattern = ' ')))) ))}
+
+tfun<- function(x){return(paste(x, collapse=" "))}
+
+
+
+
+split <- splitFun(rawHTML)  
+t <- tfun(split$text)
+
+```
+
+
+```{r}
+strip_html <- function(s) {
+    html_text(read_html(s))
+}
+strip_html2 <- function(s) {
+    html_text(s)
+}
+
+regular <- c("addcloakedmailto","ajax", "articlesfor",
+"attr", "authorsfor", "baranov", "blogsearch","ca",
+"caption","cb", "cdf", "component", "content","csrf"
+)
+
+
+cleanFun <- function(htmlString) {
+  x <- gsub("\\{", "<", htmlString)
+  x <- gsub("\\}", ">", x)
+  x <- gsub("<.*?>|<.*?>;|\n|\t", "", x)
+   return(x)
+}
+
+dict <- c(qdapDictionaries::GradyAugmented)
+
+```
+https://stackoverflow.com/questions/17227294/removing-html-tags-from-a-string-in-r
+
+Read the webpage in, so you can pull similar scientific names etc:
+https://statistics.berkeley.edu/computing/faqs/reading-web-pages-r
+```{r}
+rawHfun <- function(x){paste(readLines(x), collapse="\n")}
+
+sHfun2 <- function(x){return(data.frame(text = unlist(str_split(x, pattern = '<p class="text">|<p>|<p style="text-align: center;">'))))} 
+
+splitFun <- function(x){return(unique(data.frame(text = gsub("(?![.'-])[[:punct:]]", "",perl=TRUE, unlist(str_split(strip_html(x), pattern = ' ')))) ))}
+
+tfun<- function(x){return(paste(x, collapse=" "))}
+```
+
+# Import the Figures
+```{r}
+figHTML <- rawHfun(paste(papername, "_ Figures.html", sep=""))
+fsplit <- splitFun(figHTML)  
+tfig <- tfun(fsplit$text)
+
+```
+
+
+#Spelling double checker
+```{r}
+wrongfun <- function(x) {
+  x2 <- unique(data.frame(x = which_misspelled(x, range = 2, assume.first.correct = TRUE, dictionary=dict))) %>%
+  arrange(x)
+  return(x2)
+}
+okay <- read.csv("Misspelled But OK Words.csv", fileEncoding="latin1")
+
+wrongs <- wrongfun(t) %>% mutate(Place = "Document")
+#write.csv(wrongs, "Spelling Output.csv")
+wrongsfig <- wrongfun(tfig) %>% mutate(Place = "Figures")
+
+together <- rbind(wrongs, wrongsfig) %>%
+  filter(x %!in% okay$x) %>%
+  arrange(x)
+write.csv(together, paste(papername, "and Figure Spelling Output.csv", sep = " ")) 
+```
+
+output html urls to double check
+
+
+Sundberg, F.A. 2005. The Topazan stage, a new Laurentian stage (Lincolnian series - “Middle” Cambrian). Journal of Paleontology, 79:63-71. https://doi.org/10.1666/0022-3360(2005)079<0063:TTSANL>2.0.CO;2
+```{r}
+#still removing <> not sure why
+
+tagshtml <- data.frame(text = unlist(str_split(rawHTML, pattern = '<a href'))) %>%
+   mutate(text = gsub('"', "", text)) %>% #removes last "
+  filter(!grepl("DOCTYPE|dj-mobile-open-btn|dj-offcanvas", text)) %>%
+  mutate(OK = gsub("</a>.*", "</a>", text)) %>%
+  mutate(HTML = gsub("target.*", "", OK)) %>% 
+ # mutate(HTML = gsub(" alt=.*", "", HTML)) %>%
+ mutate(HTML = gsub(".*http", "http", HTML)) %>%
+  mutate(HTML = gsub(".*/content/", "https://palaeo-electronica.org/content/", HTML)) %>%
+  mutate(figcal = gsub(' target.*', "", gsub(".*#", "", OK))) %>%
+  mutate(figcal = ifelse(nchar(figcal)<6, readr::parse_number(figcal, na=c("", " ", NA, "NA")), NA)) %>%
+  mutate(figcal2 = ifelse(grepl("img src", OK), readr::parse_number(gsub('.*figure', "", gsub(".jpg.*", "", figcal))), readr::parse_number(gsub(".*>", "", gsub("\\)|</a>", "", OK))))) %>%
+  mutate(Hmm = ifelse(figcal == figcal2, "", "CHECK!!!"))
+
+write.csv(tagshtml, paste(papername, "HTML check.csv", sep = " "))
+
+x = '"/content/current-in-press-articles/724-1173/3635-cadiz-dolichometopids-figures#f2" target="_blank"><img src="/content/images/1173/s_figure2.jpg" alt="s figure2"'
+
+x = '=/content/current-in-press-articles/724-1173/3635-cadiz-dolichometopids-figures#f2 target=_blank><img src=/content/images/1173/s_figure2.jpg alt=s figure2 width=200 height=188 style=margin: 10px; float: right; /></a>'
+
+readr::parse_number(gsub('" target.*', "", gsub(".*#", "", x)))
+ifelse(grepl("img src", x), readr::parse_number(gsub('.*figure', "", gsub(".jpg.*", "", x))), readr::parse_number(gsub(".*>", "", gsub("\\)|</a>", "", x))))
+
+
+
+
+tagshtml[8,2]
+tagshtml[8,5]
+
+```
+
+Sometimes the doi things are not hyperlinks.
+
+```{r}
+html2 <- data.frame(text = unlist(str_split(rawHTML, pattern = 'https://'))) %>%
+   mutate(text = gsub('"', "", text)) %>% 
+   mutate(OK = gsub("</a>.*|</p>.*|<br />.*|<p.*| target.*", "", text)) %>%
+  group_by(OK) %>%
+  tally() %>%
+  select(-n)
+
+write.csv(html2, "DOI html check.csv", row.names = FALSE)
+```
+
